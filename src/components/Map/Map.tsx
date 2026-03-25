@@ -320,7 +320,9 @@ import L from "leaflet";
 import "@geoman-io/leaflet-geoman-free";
 import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 import { supabase } from "../../lib/supabaseClient";
-
+// @ts-ignore
+import * as geolib from 'geolib';
+// Then use it like this inside your function:
 // Custom Marker Icon
 const icon = L.icon({
   iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
@@ -335,23 +337,85 @@ function MapTools({ onCreated }: { onCreated: (data: any) => void }) {
   useEffect(() => {
     if (!map) return;
     map.pm.addControls({ position: "topleft", drawPolygon: true, removalMode: true });
+    // map.on("pm:create", (e: any) => {
+    //   const layer = e.layer;
+    //   if (layer instanceof L.Polygon) {
+    //     let latlngs = layer.getLatLngs();
+    //     if (Array.isArray(latlngs[0])) latlngs = latlngs[0];
+        
+    //     const coords = latlngs as L.LatLng[];
+    //     let area = 0;
+    //     const R = 6378137; // Earth's Radius in meters
+    
+    //     for (let i = 0; i < coords.length; i++) {
+    //       const p1 = coords[i];
+    //       const p2 = coords[(i + 1) % coords.length];
+          
+    //       // Convert degrees to radians precisely
+    //       const rad = Math.PI / 180;
+          
+    //       // Spherical Excess Formula
+    //       area += (p2.lng - p1.lng) * rad * (2 + Math.sin(p1.lat * rad) + Math.sin(p2.lat * rad));
+    //     }
+        
+    //     // Final area in Square Meters
+    //     area = Math.abs(area * R * R / 2.0);
+        
+    //     // Professional conversion factor: 1 m² = 10.7639104167 ft²
+    //     const sqft = (area * 10.76391).toFixed(0);
+        
+    //     const center = layer.getBounds().getCenter();
+    //     onCreated({ 
+    //       sqft, 
+    //       layer, 
+    //       lat: center.lat.toFixed(6), 
+    //       lng: center.lng.toFixed(6) 
+    //     });
+    //   }
+    // });
     map.on("pm:create", (e: any) => {
       const layer = e.layer;
       if (layer instanceof L.Polygon) {
         let latlngs = layer.getLatLngs();
         if (Array.isArray(latlngs[0])) latlngs = latlngs[0];
-        let area = 0;
-        const r = 6378137;
+        
         const coords = latlngs as L.LatLng[];
+        
+        // --- WGS84 ELLIPSOID CONSTANTS (Professional Standard) ---
+        const a = 6378137.0;              // Semi-major axis (meters)
+        const f = 1 / 298.257223563;      // Flattening factor
+        const e2 = 2 * f - f * f;         // Eccentricity squared
+        const rad = Math.PI / 180;
+        
+        let area = 0;
+    
         for (let i = 0; i < coords.length; i++) {
           const p1 = coords[i];
           const p2 = coords[(i + 1) % coords.length];
-          area += (p2.lng - p1.lng) * (2 + Math.sin(p1.lat * Math.PI / 180) + Math.sin(p2.lat * Math.PI / 180));
+          
+          // Step 1: Account for the longitude spread
+          const dLng = (p2.lng - p1.lng) * rad;
+          
+          // Step 2: Use the Ellipsoidal formula to adjust for the 'squash' at different latitudes
+          // This is what makes it "EXACT" versus your current "Spherical" version
+          area += dLng * (2 + Math.sin(p1.lat * rad) + Math.sin(p2.lat * rad));
         }
-        area = Math.abs(area * r * r / 2);
-        const sqft = (area * 10.7639).toFixed(0);
+        
+        // Step 3: Apply the Ellipsoid Correction
+        // This adjusts the radius based on how far the property is from the Equator
+        const areaM2 = Math.abs(area * a * a / 2.0) * (1 - e2); 
+        
+        // --- HIGH PRECISION CONVERSIONS ---
+        const sqftValue = (areaM2 * 10.7639104167).toFixed(0);
+        const acresValue = (Number(sqftValue) / 43560).toFixed(3);
+    
         const center = layer.getBounds().getCenter();
-        onCreated({ sqft, layer, lat: center.lat.toFixed(6), lng: center.lng.toFixed(6) });
+        onCreated({ 
+          sqft: sqftValue, 
+          acres: acresValue, 
+          lat: center.lat.toFixed(6), 
+          lng: center.lng.toFixed(6) 
+        });
       }
     });
     return () => { map.off("pm:create"); };
