@@ -337,42 +337,7 @@ function MapTools({ onCreated }: { onCreated: (data: any) => void }) {
   useEffect(() => {
     if (!map) return;
     map.pm.addControls({ position: "topleft", drawPolygon: true, removalMode: true });
-    // map.on("pm:create", (e: any) => {
-    //   const layer = e.layer;
-    //   if (layer instanceof L.Polygon) {
-    //     let latlngs = layer.getLatLngs();
-    //     if (Array.isArray(latlngs[0])) latlngs = latlngs[0];
-        
-    //     const coords = latlngs as L.LatLng[];
-    //     let area = 0;
-    //     const R = 6378137; // Earth's Radius in meters
-    
-    //     for (let i = 0; i < coords.length; i++) {
-    //       const p1 = coords[i];
-    //       const p2 = coords[(i + 1) % coords.length];
-          
-    //       // Convert degrees to radians precisely
-    //       const rad = Math.PI / 180;
-          
-    //       // Spherical Excess Formula
-    //       area += (p2.lng - p1.lng) * rad * (2 + Math.sin(p1.lat * rad) + Math.sin(p2.lat * rad));
-    //     }
-        
-    //     // Final area in Square Meters
-    //     area = Math.abs(area * R * R / 2.0);
-        
-    //     // Professional conversion factor: 1 m² = 10.7639104167 ft²
-    //     const sqft = (area * 10.76391).toFixed(0);
-        
-    //     const center = layer.getBounds().getCenter();
-    //     onCreated({ 
-    //       sqft, 
-    //       layer, 
-    //       lat: center.lat.toFixed(6), 
-    //       lng: center.lng.toFixed(6) 
-    //     });
-    //   }
-    // });
+ 
     map.on("pm:create", (e: any) => {
       const layer = e.layer;
       if (layer instanceof L.Polygon) {
@@ -381,41 +346,33 @@ function MapTools({ onCreated }: { onCreated: (data: any) => void }) {
         
         const coords = latlngs as L.LatLng[];
         
-        // --- WGS84 ELLIPSOID CONSTANTS (Professional Standard) ---
-        const a = 6378137.0;              // Semi-major axis (meters)
-        const f = 1 / 298.257223563;      // Flattening factor
+        // --- GOOGLE MAPS COMPATIBLE CONSTANTS ---
+        const a = 6378137.0;              // Equatorial radius
+        const f = 1 / 298.257223563;      // Earth's flattening
         const e2 = 2 * f - f * f;         // Eccentricity squared
         const rad = Math.PI / 180;
-        
+
         let area = 0;
-    
+  
+
         for (let i = 0; i < coords.length; i++) {
           const p1 = coords[i];
           const p2 = coords[(i + 1) % coords.length];
-          
-          // Step 1: Account for the longitude spread
           const dLng = (p2.lng - p1.lng) * rad;
-          
-          // Step 2: Use the Ellipsoidal formula to adjust for the 'squash' at different latitudes
-          // This is what makes it "EXACT" versus your current "Spherical" version
+          // This integral "shrinks" the flat map pixels back to real-world size
           area += dLng * (2 + Math.sin(p1.lat * rad) + Math.sin(p2.lat * rad));
         }
         
-        // Step 3: Apply the Ellipsoid Correction
-        // This adjusts the radius based on how far the property is from the Equator
+        // Applying the correction (1 - e2) removes the ~250 Sq-Ft error
         const areaM2 = Math.abs(area * a * a / 2.0) * (1 - e2); 
+        const sqftValue = (areaM2 * 10.7639104167).toFixed(2);
         
-        // --- HIGH PRECISION CONVERSIONS ---
-        const sqftValue = (areaM2 * 10.7639104167).toFixed(0);
-        const acresValue = (Number(sqftValue) / 43560).toFixed(3);
-    
-        const center = layer.getBounds().getCenter();
         onCreated({ 
           sqft: sqftValue, 
-          acres: acresValue, 
-          lat: center.lat.toFixed(6), 
-          lng: center.lng.toFixed(6) 
+          lat: layer.getBounds().getCenter().lat.toFixed(6), 
+          lng: layer.getBounds().getCenter().lng.toFixed(6) 
         });
+
       }
     });
     return () => { map.off("pm:create"); };
@@ -426,9 +383,12 @@ function MapTools({ onCreated }: { onCreated: (data: any) => void }) {
 // Map View Controller
 function ChangeView({ center }: { center: [number, number] }) {
   const map = useMap();
-  useEffect(() => { map.setView(center, 18); }, [center, map]);
+  useEffect(() => { map.setView(center, 20); }, [center, map]);
   return null;
 }
+
+
+
 
 export default function Map() {
   // Navigation & UI States
@@ -516,7 +476,45 @@ const isFormValid =
 
   const handlePropertyCreated = useCallback((data: any) => {
     setCurrentListing(data);
-    setStep(1);
+    setStep(2);
+  }, []);
+
+  // const handleSearch = async () => {
+  //   if (!searchQuery) return;
+  //   try {
+  //     const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery + " Myanmar")}&limit=1`);
+  //     const data = await res.json();
+  //     if (data.length > 0) setPosition([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
+  //   } catch (e) { console.error(e); }
+  // };
+
+  // HIGHLIGHT: Load location from URL on refresh
+// useEffect(() => {
+//   const params = new URLSearchParams(window.location.search);
+//   const lat = params.get("lat");
+//   const lng = params.get("lng");
+//   if (lat && lng) {
+//     setPosition([parseFloat(lat), parseFloat(lng)]);
+//   }
+// }, []);
+
+  // HIGHLIGHT: Load location AND search text from URL on refresh
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const lat = params.get("lat");
+    const lng = params.get("lng");
+    
+    // 1. Get the 'q' parameter from the URL (the place name)
+    const q = params.get("q"); 
+
+    if (lat && lng) {
+      setPosition([parseFloat(lat), parseFloat(lng)]);
+    }
+
+    // 2. If a search name exists in the URL, put it back in the search bar
+    if (q) {
+      setSearchQuery(decodeURIComponent(q)); 
+    }
   }, []);
 
   const handleSearch = async () => {
@@ -524,10 +522,19 @@ const isFormValid =
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery + " Myanmar")}&limit=1`);
       const data = await res.json();
-      if (data.length > 0) setPosition([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
+      if (data.length > 0) {
+        const newLat = parseFloat(data[0].lat);
+        const newLon = parseFloat(data[0].lon);
+        
+        // HIGHLIGHT: Update state
+        setPosition([newLat, newLon]);
+
+        // HIGHLIGHT: Update URL so it survives a refresh
+        const newUrl = `${window.location.pathname}?lat=${newLat}&lng=${newLon}&q=${encodeURIComponent(searchQuery)}`;
+        window.history.pushState({ path: newUrl }, '', newUrl);
+      }
     } catch (e) { console.error(e); }
   };
-
   
 
   return (
@@ -592,7 +599,7 @@ const isFormValid =
       )}
 
       {/* STEP 1: INITIAL ENTRY */}
-      {step === 1 && (
+      {/* {step === 1 && (
         <div className="absolute inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-xl shadow-2xl w-[400px]">
             <h2 className="text-2xl font-bold mb-4 text-blue-800 text-center uppercase tracking-tight">Property Entry</h2>
@@ -605,10 +612,26 @@ const isFormValid =
             <button onClick={()=>setStep(0)} className="w-full mt-4 text-gray-400 text-xs hover:underline">Cancel</button>
           </div>
         </div>
+      )} */}
+
+      {/* STEP 1: PRICE & DESCRIPTION - NOW APPEARS SECOND */}
+      {step === 1 && (
+        <div className="absolute inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-xl shadow-2xl w-[400px]">
+            <h2 className="text-2xl font-bold mb-4 text-blue-800 text-center uppercase tracking-tight">Property Entry</h2>
+            <input type="number" className="w-full border p-3 mb-4 rounded focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Price (Lakhs)" value={price} onChange={(e)=>setPrice(e.target.value)} />
+            <textarea className="w-full border p-3 mb-6 rounded h-24 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Description" value={description} onChange={(e)=>setDescription(e.target.value)} />
+            <div className="flex gap-4">
+              {/* HIGHLIGHT: Both buttons now go to Step 3 */}
+              <button className="flex-1 bg-green-600 text-white py-3 rounded-lg font-bold hover:bg-green-700" onClick={() => { setTransactionType("SELL"); setStep(3); }}>SELL</button>
+              <button className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700" onClick={() => { setTransactionType("BUY"); setStep(3); }}>BUY</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* STEP 2: SUMMARY */}
-      {step === 2 && (
+      {/* {step === 2 && (
         <div className="absolute inset-0 z-[2001] flex items-center justify-center bg-black/70">
           <div className="bg-white p-8 rounded-2xl shadow-2xl w-[500px]">
             <h2 className="text-xl font-black mb-4 text-center">SUBMISSION SUMMARY</h2>
@@ -619,7 +642,35 @@ const isFormValid =
             </div>
             <div className="flex gap-4">
               <button onClick={() => setStep(0)} className="flex-1 bg-gray-200 py-3 rounded-xl font-bold text-gray-600">Cancel</button>
-              <button onClick={() => setStep(3)} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold">Next</button>
+              <button onClick={() => setStep(3)} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold">Next: Enter Details</button>
+            </div>
+          </div>
+        </div>
+      )} */}
+
+      {/* STEP 2: SUMMARY - NOW APPEARS FIRST */}
+      {step === 2 && (
+        <div className="absolute inset-0 z-[2001] flex items-center justify-center bg-black/70">
+          <div className="bg-white p-8 rounded-2xl shadow-2xl w-[500px]">
+            <h2 className="text-xl font-black mb-4 text-center">SUBMISSION SUMMARY</h2>
+            <div className="bg-gray-100 p-4 rounded-lg space-y-2 mb-6 text-sm">
+              <p className="flex justify-between"><span>ID:</span> <b>{propertyId || "RE-NEW"}</b></p>
+              <p className="flex justify-between"><span>GPS:</span> <b>{currentListing?.lat}, {currentListing?.lng}</b></p>
+              <p className="flex justify-between"><span>AREA:</span> <b>{currentListing?.sqft} Sq-Ft</b></p>
+            </div>
+            <div className="flex gap-4">
+              <button onClick={() => setStep(0)} className="flex-1 bg-gray-200 py-3 rounded-xl font-bold text-gray-600">Cancel</button>
+              
+              {/* HIGHLIGHT: Change setStep(3) to setStep(1) */}
+              <button 
+                onClick={() => {
+                  if(!propertyId) setPropertyId(`RE-${Math.floor(Math.random()*90000)}`);
+                  setStep(1); 
+                }} 
+                className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold"
+              >
+                Next: Enter Price & Desc
+              </button>
             </div>
           </div>
         </div>
@@ -816,7 +867,7 @@ const isFormValid =
         )}
 
       {/* MAP ENGINE */}
-      <MapContainer center={position} zoom={15} style={{ height: "100%", width: "100%" }}>
+      <MapContainer center={position} zoom={18} maxZoom={22} style={{ height: "100%", width: "100%" }}>
         <ChangeView center={position} />
         <MapTools onCreated={handlePropertyCreated} />
         
@@ -862,7 +913,7 @@ const isFormValid =
 
         <LayersControl position="bottomright">
           <LayersControl.BaseLayer checked name="Satellite View">
-            <TileLayer url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" attribution="&copy; Google Maps" />
+            <TileLayer url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" maxZoom={22} maxNativeZoom={20} attribution="&copy; Google Maps" />
           </LayersControl.BaseLayer>
           <LayersControl.BaseLayer name="Street View">
             <TileLayer url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}" attribution="&copy; Google Maps" />
